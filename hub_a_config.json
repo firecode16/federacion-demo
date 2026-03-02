@@ -1,0 +1,8 @@
+{
+    "empresa-b.com": {
+        "url": "ws://localhost:8766",
+        "token": "secreto123",
+        "enabled": true,
+        "autoconnect": true
+    }
+}
