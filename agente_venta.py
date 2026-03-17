@@ -12,8 +12,7 @@ class AgenteVenta(WSNeuralAgent):
         print(f"\n📥 Vendedor recibe: {signal.payload}")
 
         if signal.signal_type == NeuralSignalType.NOREPINEPHRINE:
-            # Llega un pedido del comprador
-            cliente_global = signal.payload.get("de")   # ← nombre completo (ej. comprador@empresa-a.com)
+            cliente_global = signal.payload.get("de")
             producto = signal.payload.get("producto", "desconocido")
             monto = signal.payload.get("monto", 0)
             msg_id = signal.msg_id
@@ -22,10 +21,9 @@ class AgenteVenta(WSNeuralAgent):
                 print("⚠️  El payload no incluye 'de', no se puede responder")
                 return
 
-            # Guardar pendiente para asociar con la futura factura
             self.pedidos_pendientes[msg_id] = (cliente_global, producto, monto)
 
-            # 1. Responder al comprador inmediatamente
+            # 1. Responder al comprador
             respuesta_inmediata = {
                 "tipo": "confirmacion_pedido",
                 "producto": producto,
@@ -35,9 +33,9 @@ class AgenteVenta(WSNeuralAgent):
             await self.transmit(cliente_global, NeuralSignalType.DOPAMINE, respuesta_inmediata)
             print(f"✅ Confirmación enviada a {cliente_global}")
 
-            # 2. Enviar tarea a facturación (local)
+            # 2. Enviar tarea a facturación
             factura_payload = {
-                "cliente": cliente_global,   # pasamos el nombre completo para que facturación lo use
+                "cliente": cliente_global,
                 "producto": producto,
                 "monto": monto,
                 "pedido_id": msg_id
@@ -46,12 +44,10 @@ class AgenteVenta(WSNeuralAgent):
             print("✅ Tarea enviada a facturación")
 
         elif signal.signal_type == NeuralSignalType.SEROTONIN:
-            # Llega factura generada desde facturación
             factura = signal.payload
             pedido_id = factura.get("pedido_id")
             if pedido_id in self.pedidos_pendientes:
                 cliente_global, producto, monto = self.pedidos_pendientes.pop(pedido_id)
-                # Reenviar factura al comprador original
                 factura_para_cliente = {
                     "tipo": "factura",
                     "factura_id": factura.get("factura_id"),

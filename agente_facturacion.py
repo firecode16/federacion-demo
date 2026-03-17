@@ -9,19 +9,17 @@ class AgenteFacturacion(WSNeuralAgent):
         print(f"\n📥 Facturación recibe: {signal.payload}")
 
         if signal.signal_type == NeuralSignalType.GLUTAMATE:
-            # Simular generación de factura
-            await asyncio.sleep(1)  # simular procesamiento
+            await asyncio.sleep(1)
             factura_id = f"FAC-{random.randint(1000,9999)}"
             respuesta = {
                 "factura_id": factura_id,
-                "cliente": signal.payload.get("cliente"),   # ← nombre completo
+                "cliente": signal.payload.get("cliente"),
                 "producto": signal.payload.get("producto"),
                 "monto": signal.payload.get("monto"),
                 "pedido_id": signal.payload.get("pedido_id"),
                 "estado": "emitida",
                 "timestamp": asyncio.get_event_loop().time()
             }
-            # Responder al vendedor (source original)
             await self.transmit(signal.source, NeuralSignalType.SEROTONIN, respuesta)
             print(f"✅ Factura {factura_id} generada y enviada a vendedor")
 

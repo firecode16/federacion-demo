@@ -1,29 +1,24 @@
-# 🧠 Federación de Hubs NeuralProtocol - Demo de Compra-Venta-Facturación
+# 🧠 Federación de Hubs NeuralProtocol - Demo de Compra-Venta-Facturación (Fase 2)
 
-Este proyecto demuestra la **federación entre dos hubs** de NeuralProtocol, simulando una interacción B2B entre una empresa de compras (Hub A, dominio `empresa-a.com`) y una empresa de ventas (Hub B, dominio `empresa-b.com`). Se utilizan tres agentes:
+Este proyecto demuestra la **federación entre dos hubs** de NeuralProtocol con **descubrimiento dinámico y presencia (Fase 2)** , simulando una interacción B2B entre una empresa de compras (Hub A, dominio `empresa-a.com`) y una empresa de ventas (Hub B, dominio `empresa-b.com`).
 
-- **`comprador`** (hub A) – Solicita productos.
-- **`vendedor`** (hub B) – Recibe pedidos, confirma y coordina con facturación.
-- **`facturacion`** (hub B) – Genera facturas y las envía al vendedor.
+## 🆕 Novedades de la Fase 2
 
-El flujo completo incluye:
-
-1. El comprador envía una solicitud de compra a `vendedor@empresa-b.com` (señal `NOREPINEPHRINE`).
-2. El vendedor responde inmediatamente al comprador (señal `DOPAMINE`) y envía una tarea a facturación (señal `GLUTAMATE`).
-3. Facturación genera una factura y la envía al vendedor (señal `SEROTONIN`).
-4. El vendedor reenvía la factura al comprador (señal `DOPAMINE`).
-
-Todo el tráfico entre hubs utiliza el protocolo de federación implementado (Fase 1), con autenticación mediante token compartido y reenvío de señales a través de conexiones hub‑hub.
+- **Descubrimiento dinámico de agentes remotos**: los hubs intercambian automáticamente las listas de agentes conectados (`HUB_PEER_UPDATE`).
+- **Consulta de disponibilidad**: los agentes pueden verificar si un destino remoto está online antes de enviar señales (nuevo método JSON-RPC `remote_agent.discover`).
+- **Enrutamiento optimizado**: el hub local solo reenvía señales a hubs remotos si el agente destino existe y está disponible.
+- **Heartbeat entre hubs**: conexiones persistentes con ping/pong cada 15 segundos para detectar fallos rápidamente.
+- **Agente monitor**: nuevo script que se conecta y desconecta periódicamente para probar las actualizaciones dinámicas.
 
 ---
 
 ## 📋 Requisitos previos
 
 - Python 3.9 o superior.
-- Los paquetes `neural-protocol` y `neural-hub` instalados (preferiblemente desde los repositorios con las modificaciones para federación).
+- Los paquetes `neural-protocol` y `neural-hub` instalados **con soporte para Fase 2** (versión ≥ 1.2).
 - Opcional: `aiohttp` para el dashboard (`pip install neural-hub[dashboard]`).
 
-Si aún no tienes los paquetes modificados, clona los repositorios y ejecuta `pip install -e .` en cada uno:
+### Instalación de los paquetes (modo desarrollo)
 
 ```bash
 git clone https://github.com/firecode16/neural-protocol.git
@@ -32,25 +27,22 @@ pip install -e .
 cd ..
 git clone https://github.com/firecode16/neural-hub.git
 cd neural-hub
-pip install -e .[dashboard]   # si quieres el dashboard
+pip install -e .[dashboard]   # incluye aiohttp para el dashboard
 cd ..
 ```
-
-Asegúrate de que los cambios de federación (parámetro `--domain`, corrección en `send_ctrl`, etc.) estén presentes en tu instalación de `neural-hub`. Puedes copiar los archivos `server.py` y `run_hub.py` proporcionados en la solución anterior.
 
 ---
 
 ## 📁 Estructura del proyecto
 
-Crea una carpeta, por ejemplo `federacion-demo`, y dentro de ella los siguientes archivos:
-
 ```
 federacion-demo/
 ├── hub_a_config.json          # Configuración del hub A (empresa-a.com)
 ├── hub_b_config.json          # Configuración del hub B (empresa-b.com)
-├── agente_compra.py           # Agente comprador (hub A)
+├── agente_compra.py           # Agente comprador (hub A) - MODIFICADO (consulta disponibilidad)
 ├── agente_venta.py            # Agente vendedor (hub B)
 ├── agente_facturacion.py      # Agente facturación (hub B)
+├── agente_monitor.py          # NUEVO: agente que se conecta/desconecta para probar descubrimiento
 └── README.md                  # Este archivo
 ```
 
@@ -59,7 +51,6 @@ federacion-demo/
 ## ⚙️ Configuración de los hubs
 
 ### Archivo `hub_a_config.json`
-
 ```json
 {
     "empresa-b.com": {
@@ -72,7 +63,6 @@ federacion-demo/
 ```
 
 ### Archivo `hub_b_config.json`
-
 ```json
 {
     "empresa-a.com": {
@@ -84,13 +74,13 @@ federacion-demo/
 }
 ```
 
-**Importante:** El token debe coincidir en ambos archivos. Los dominios (`empresa-a.com`, `empresa-b.com`) son los que se usarán al iniciar los hubs con el parámetro `--domain`.
+**Importante:** El token debe coincidir en ambos archivos. Los dominios (`empresa-a.com`, `empresa-b.com`) se usan al iniciar los hubs con `--domain`.
 
 ---
 
 ## 🤖 Scripts de los agentes
 
-### `agente_compra.py`
+### `agente_compra.py` (con verificación de disponibilidad)
 
 ```python
 #!/usr/bin/env python3
@@ -116,6 +106,7 @@ async def main():
     print("  enviar <destino@dominio> <producto> <monto>")
     print("  salir")
     print("Ejemplo: enviar vendedor@empresa-b.com tornillos 250")
+    print("\n🔍 NUEVO: Antes de enviar, se consulta disponibilidad remota (remote_agent.discover)")
 
     try:
         while True:
@@ -136,6 +127,24 @@ async def main():
                 except ValueError:
                     print("❌ El monto debe ser un número")
                     continue
+
+                # Consultar disponibilidad remota (Fase 2)
+                try:
+                    print(f"🔍 Consultando disponibilidad de {destino}...")
+                    info = await agente.jsonrpc_call(
+                        "remote_agent.discover",
+                        {"name": destino},
+                        timeout=5.0
+                    )
+                    if not info.get("online"):
+                        print(f"⚠️  El agente {destino} no está disponible en este momento.")
+                        continue
+                    else:
+                        print(f"✅ {destino} está disponible. Procediendo con el envío.")
+                except Exception as e:
+                    print(f"❌ Error al consultar disponibilidad: {e}")
+                    continue
+
                 payload = {
                     "producto": producto,
                     "monto": monto,
@@ -157,7 +166,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### `agente_venta.py`
+### `agente_venta.py` (sin cambios)
 
 ```python
 #!/usr/bin/env python3
@@ -185,7 +194,6 @@ class AgenteVenta(WSNeuralAgent):
 
             self.pedidos_pendientes[msg_id] = (cliente_global, producto, monto)
 
-            # 1. Responder al comprador
             respuesta_inmediata = {
                 "tipo": "confirmacion_pedido",
                 "producto": producto,
@@ -195,7 +203,6 @@ class AgenteVenta(WSNeuralAgent):
             await self.transmit(cliente_global, NeuralSignalType.DOPAMINE, respuesta_inmediata)
             print(f"✅ Confirmación enviada a {cliente_global}")
 
-            # 2. Enviar tarea a facturación
             factura_payload = {
                 "cliente": cliente_global,
                 "producto": producto,
@@ -245,7 +252,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### `agente_facturacion.py`
+### `agente_facturacion.py` (sin cambios)
 
 ```python
 #!/usr/bin/env python3
@@ -259,7 +266,7 @@ class AgenteFacturacion(WSNeuralAgent):
         print(f"\n📥 Facturación recibe: {signal.payload}")
 
         if signal.signal_type == NeuralSignalType.GLUTAMATE:
-            await asyncio.sleep(1)  # simular procesamiento
+            await asyncio.sleep(1)
             factura_id = f"FAC-{random.randint(1000,9999)}"
             respuesta = {
                 "factura_id": factura_id,
@@ -294,129 +301,206 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+### 🆕 `agente_monitor.py` (nuevo)
+
+```python
+#!/usr/bin/env python3
+"""
+Agente Monitor (Hub B, dominio empresa-b.com)
+Se conecta y desconecta periódicamente para probar las actualizaciones dinámicas de peers.
+"""
+import asyncio
+import random
+from neural_protocol.agent.base_ws import WSNeuralAgent
+
+class AgenteMonitor(WSNeuralAgent):
+    async def handle_signal(self, signal):
+        pass  # No hace nada, solo para probar presencia
+
+async def main():
+    while True:
+        try:
+            agente = AgenteMonitor(
+                agent_id="monitor",
+                hub_host="localhost",
+                hub_port=8766,
+                domain="empresa-b.com"
+            )
+            print("\n🟡 Monitor conectándose...")
+            await agente.start()
+            tiempo_activo = random.randint(5, 15)
+            print(f"🟢 Monitor conectado. Activo {tiempo_activo} segundos.")
+            await asyncio.sleep(tiempo_activo)
+            await agente.stop()
+            print("🔴 Monitor desconectado.")
+            await asyncio.sleep(random.randint(5, 10))
+        except KeyboardInterrupt:
+            break
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 Monitor finalizado.")
+```
+
 ---
 
-## 🚀 Ejecución del demo
+## 🚀 Ejecución del demo (Fase 2)
 
-Sigue estos pasos en orden. Necesitarás **cinco terminales** (o cuatro si no usas dashboard).
+Necesitarás **seis terminales** para probar todas las capacidades.
 
-### 1. Iniciar el hub B (ventas, puerto 8766)
+### 1. Iniciar los hubs (dos terminales)
 
+**Hub B (ventas, puerto 8766)**
 ```bash
+cd /ruta/a/federacion-demo
 python -m neural_hub.scripts.run_hub --port 8766 --domain empresa-b.com --remote-hubs hub_b_config.json --dashboard-port 8081
 ```
 
-### 2. Iniciar el hub A (compras, puerto 8765)
-
+**Hub A (compras, puerto 8765)**
 ```bash
+cd /ruta/a/federacion-demo
 python -m neural_hub.scripts.run_hub --port 8765 --domain empresa-a.com --remote-hubs hub_a_config.json --dashboard-port 8080
 ```
 
-Verás que los hubs se conectan mutuamente (mensaje `🔌 Hub remoto conectado (entrante): ...`).
+### 2. Iniciar los agentes del hub B (tres terminales)
 
-### 3. Iniciar el agente de facturación (conecta al hub B)
-
+**Facturación**
 ```bash
 python agente_facturacion.py
 ```
 
-### 4. Iniciar el agente vendedor (conecta al hub B)
-
+**Vendedor (puedes ejecutar varias instancias para probar round-robin)**
 ```bash
 python agente_venta.py
 ```
 
-### 5. Iniciar el agente comprador (conecta al hub A)
+**Monitor**
+```bash
+python agente_monitor.py
+```
+
+### 3. Iniciar el agente comprador (hub A)
 
 ```bash
 python agente_compra.py
 ```
 
-Una vez que todos los agentes estén en línea, en la terminal del **comprador** escribe un comando como:
+### 4. Probar los escenarios
 
+Desde el comprador, prueba:
+
+| Comando | Comportamiento esperado |
+|---------|-------------------------|
+| `enviar vendedor@empresa-b.com tornillos 250` | Consulta disponibilidad → online → envía → recibe confirmación y factura |
+| `enviar monitor@empresa-b.com prueba 100` (cuando el monitor esté activo) | Consulta → online → envía (aunque el monitor no responde) |
+| `enviar monitor@empresa-b.com prueba 100` (cuando el monitor esté desconectado) | Consulta → offline → no envía |
+| `enviar falso@empresa-b.com prueba 100` | Consulta → no existe → no envía |
+
+---
+
+## 📊 Visualización con dashboards
+
+- Hub A: [http://localhost:8080](http://localhost:8080)
+- Hub B: [http://localhost:8081](http://localhost:8081)
+
+Los dashboards muestran:
+- Agentes conectados en tiempo real.
+- Número de agentes remotos descubiertos.
+- Tráfico de señales y sinapsis.
+- Heartbeats y estado de conexiones entre hubs.
+
+---
+
+## 🔍 Resultado esperado (con Fase 2)
+
+### Terminal del comprador
 ```
 enviar vendedor@empresa-b.com tornillos 250
-```
-
----
-
-## 📊 Visualización con los dashboards
-
-- Abre `http://localhost:8080` para ver el dashboard del hub A.
-- Abre `http://localhost:8081` para ver el dashboard del hub B.
-
-Ambos dashboards mostrarán en tiempo real los agentes conectados, las sinapsis, el tráfico de señales y las estadísticas.
-
----
-
-## 🔍 Resultado esperado
-
-Después de enviar el pedido, deberías ver en las terminales:
-
-- **Comprador**: dos respuestas entrantes (confirmación y factura).
-- **Vendedor**: recibe el pedido, envía confirmación, envía tarea a facturación, recibe factura y la reenvía.
-- **Facturación**: recibe la tarea, genera una factura y responde al vendedor.
-- **Hubs**: registran los reenvíos y las señales.
-
-Ejemplo de salida (resumida):
-
-**Comprador:**
-```
+🔍 Consultando disponibilidad de vendedor@empresa-b.com...
+✅ vendedor@empresa-b.com está disponible. Procediendo con el envío.
 📤 🟡 NeuralSignal [NOREPINEPHRINE] ... (a 'vendedor@empresa-b.com')
 ✅ Solicitud enviada a vendedor@empresa-b.com
 
-📥 Respuesta de 9e6dc8c6: {'tipo': 'confirmacion_pedido', ...}
-📥 Respuesta de 9e6dc8c6: {'tipo': 'factura', 'factura_id': 'FAC-1797', ...}
+📥 Respuesta de 9d6701bb: {'tipo': 'confirmacion_pedido', ...}
+📥 Respuesta de 9d6701bb: {'tipo': 'factura', 'factura_id': 'FAC-1735', ...}
+
+enviar monitor@empresa-b.com prueba 100
+🔍 Consultando disponibilidad de monitor@empresa-b.com...
+⚠️  El agente monitor@empresa-b.com no está disponible en este momento.
 ```
 
-**Vendedor:**
-```
-📥 Vendedor recibe: {'producto': 'tornillos', 'monto': 250.0, 'de': 'comprador@empresa-a.com', ...}
-✅ Confirmación enviada a comprador@empresa-a.com
-✅ Tarea enviada a facturación
-📥 Vendedor recibe: {'factura_id': 'FAC-1797', 'cliente': 'comprador@empresa-a.com', ...}
-✅ Factura reenviada a comprador@empresa-a.com
-```
-
-**Facturación:**
-```
-📥 Facturación recibe: {'cliente': 'comprador@empresa-a.com', 'producto': 'tornillos', ...}
-✅ Factura FAC-1797 generada y enviada a vendedor
-```
-
+### Terminales de los hubs
 **Hub A:**
 ```
-📨 Señal reenviada desde empresa-b.com para comprador
-  ↪ (reenviado) 🟢 → comprador
+[22:11:31] HUB | 📨 Señal reenviada desde empresa-b.com para comprador
+[22:11:31] HUB |   ↪ (reenviado) 🟢 → comprador
+[22:11:36] HUB | 💓 Heartbeat | agentes=1 señales=1 remotos=2
 ```
 
 **Hub B:**
 ```
-📨 Señal reenviada desde empresa-a.com para vendedor
-  ↪ (reenviado) 🟡 → vendedor
-  ↪ 🟣 vendedor→facturacion (round-robin 'facturacion') (182B)
-  ↪ 🔵 facturacion→vendedor (hash) (253B)
+[22:11:31] HUB | 📨 Señal reenviada desde empresa-a.com para vendedor
+[22:11:31] HUB |   ↪ (reenviado) 🟡 → vendedor
+[22:11:31] HUB |   ↪ 🟣 vendedor→facturacion (182B)
+[22:11:32] HUB |   ↪ 🔵 facturacion→vendedor (252B)
+[22:11:36] HUB | 📥 Recibida actualización de peers desde empresa-a.com (1 agentes)
 ```
+
+### Monitor (en su terminal)
+```
+🟡 Monitor conectándose...
+🟢 Monitor conectado. Activo 10 segundos.
+🔴 Monitor desconectado.
+💤 Esperando 7 segundos antes de reconectar...
+```
+
+---
+
+## 🧪 Validación de la Fase 2
+
+| Funcionalidad | Evidencia |
+|--------------|-----------|
+| **Heartbeat entre hubs** | Logs periódicos en hubs, reconexión automática |
+| **Intercambio dinámico de peers** | `📥 Recibida actualización de peers` cuando monitor se conecta/desconecta |
+| **Consulta de disponibilidad** | Comprador usa `remote_agent.discover` antes de enviar |
+| **Enrutamiento optimizado** | No se reenvían señales a `monitor` cuando está offline ni a `falso@...` |
+| **Resiliencia** | Los hubs actualizan sus registros remotos en tiempo real |
 
 ---
 
 ## 🐞 Solución de problemas
 
-| Problema | Posible causa | Solución |
-|----------|---------------|----------|
-| Los hubs no se conectan entre sí | Token incorrecto o dominio no coincide | Verifica que los archivos JSON usen los mismos dominios y token. Asegúrate de que los hubs se inicien con `--domain` correcto. |
-| Error `ctrl_msg() missing 1 required positional argument` | Versión antigua de `neural-hub` sin la corrección en `send_ctrl` | Aplica el parche en `server.py` (extraer `_ctrl` del diccionario). |
-| El vendedor no puede responder porque el hash del comprador no es conocido | El comprador no incluyó su nombre completo en el payload | Usa el campo `"de": "comprador@dominio"` en la solicitud inicial, como en el script actualizado. |
-| Las señales no llegan al destino remoto | El hub no tiene configurado el dominio remoto | Revisa que el dominio en el destino (`vendedor@empresa-b.com`) coincida con una clave en `remote_hubs`. |
+| Problema | Solución |
+|----------|----------|
+| `FileNotFoundError: hub_b_config.json` | Ejecuta los hubs desde la carpeta `federacion-demo` |
+| Los hubs no se conectan | Verifica tokens y dominios en los JSON |
+| No aparecen agentes remotos | Espera a que se complete el primer intercambio de peers (hasta 30s) |
+| Error en `jsonrpc_call` | Asegura que `neural-hub` y `neural-protocol` están actualizados a Fase 2 |
 
 ---
 
 ## 📚 Notas adicionales
 
-- La federación entre hubs utiliza una conexión WebSocket persistente con reconexión automática.
-- Los agentes pueden enviar señales a destinos remotos usando la notación `nombre@dominio`.
-- El hub resuelve los nombres locales mediante round‑robin si hay varios agentes con el mismo nombre.
-- Las sinapsis se persisten en SQLite y pueden consultarse a través del dashboard.
-- Este demo corresponde a la **Fase 1** de federación (conexión básica). Fases posteriores añadirían descubrimiento dinámico, alta disponibilidad, etc.
+- Este demo ahora corresponde a la **Fase 2** de federación (descubrimiento dinámico y presencia).
+- Las sinapsis se persisten en SQLite y son visibles en los dashboards.
+- Puedes ejecutar múltiples instancias de `vendedor` para probar round-robin.
+- La Fase 3 (alta disponibilidad y clustering) permitirá múltiples hubs por dominio y sincronización de estado.
 
-¡Disfruta explorando la comunicación B2B con NeuralProtocol! Si deseas extender el demo (por ejemplo, añadiendo más agentes o lógica de negocio), los scripts son fácilmente modificables.
+---
+
+## 🎯 Conclusión
+
+Con esta demo validamos que la **Fase 2 del NeuralProtocol** funciona en un escenario realista B2B:
+- ✅ Hubs que descubren dinámicamente agentes remotos.
+- ✅ Agentes que consultan disponibilidad antes de enviar.
+- ✅ Enrutamiento inteligente que ahorra ancho de banda.
+- ✅ Heartbeats que garantizan detección rápida de fallos.
+
+¡Listo para escalar a la Fase 3! 🚀
+
+---
+
+**Inspired by the brain – built for AI agents.**  
+[NeuralProtocol](https://github.com/firecode16/neural-protocol) | [NeuralHub](https://github.com/firecode16/neural-hub)
